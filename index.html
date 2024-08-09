@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Industrial Layoff Forecast</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #f0f4f8;
+        }
+        #map {
+            height: calc(100vh - 12rem);
+            width: 100vw;
+        }
+        .info-panel {
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(5px);
+        }
+        .bottom-bar {
+            background-color: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(5px);
+        }
+        .layoff-indicator {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body class="flex flex-col h-screen">
+    <div class="info-panel m-4">
+        <h1 class="text-3xl font-bold mb-4 text-indigo-700">Global Industrial Layoff Forecast</h1>
+        <div class="mb-4">
+            <label for="region-select" class="mr-2 text-gray-700">Select Region:</label>
+            <select id="region-select" class="p-2 border rounded bg-white text-gray-800">
+                <option value="world">World</option>
+                <option value="north-america">North America</option>
+                <option value="europe">Europe</option>
+                <option value="asia">Asia</option>
+                <option value="south-america">South America</option>
+                <option value="africa">Africa</option>
+                <option value="oceania">Oceania</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="map" class="flex-grow"></div>
+
+    <div class="bottom-bar p-4">
+        <div class="flex justify-around items-center">
+            <div class="text-center">
+                <p class="text-sm font-semibold text-gray-600">Layoff Severity</p>
+                <div class="flex items-center justify-center mt-2">
+                    <div id="layoff-indicator" class="layoff-indicator"></div>
+                    <p class="text-2xl font-bold" id="layoff-severity">Moderate</p>
+                </div>
+            </div>
+            <div class="text-center">
+                <p class="text-sm font-semibold text-gray-600">Most Affected Industry</p>
+                <p class="text-xl font-bold text-indigo-600 mt-2" id="affected-industry">Tech</p>
+            </div>
+            <div class="text-center">
+                <p class="text-sm font-semibold text-gray-600">Unemployment Rate Change</p>
+                <p class="text-xl font-bold text-orange-500 mt-2" id="unemployment-change">+0.5%</p>
+            </div>
+            <div class="text-center">
+                <p class="text-sm font-semibold text-gray-600">Stock Market Impact</p>
+                <p class="text-xl font-bold text-green-600 mt-2" id="stock-impact">-2.3%</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="chart-container" class="hidden fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white p-4 rounded-lg shadow-lg" style="width: 80%; max-width: 600px;">
+        <canvas id="layoffChart"></canvas>
+        <button id="close-chart" class="mt-4 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">Close</button>
+    </div>
+
+    <script>
+        // State management
+        const state = {
+            currentRegion: 'world',
+            layerGroups: {},
+            markers: {},
+        };
+
+        // Initialize the map
+        const map = L.map('map').setView([0, 0], 2);
+
+        // Region coordinates and zoom levels
+        const regions = {
+            'world': { center: [0, 0], zoom: 2 },
+            'north-america': { center: [40, -100], zoom: 3 },
+            'europe': { center: [50, 10], zoom: 4 },
+            'asia': { center: [34, 100], zoom: 3 },
+            'south-america': { center: [-15, -60], zoom: 3 },
+            'africa': { center: [0, 20], zoom: 3 },
+            'oceania': { center: [-25, 135], zoom: 4 }
+        };
+
+        // Tilemap sources
+        const tilemaps = {
+            'world': 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            'north-america': 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+            'europe': 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            'asia': 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',
+            'south-america': 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+            'africa': 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            'oceania': 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png'
+        };
+
+        // Create layer groups and add tilemaps for each region
+        Object.keys(regions).forEach(region => {
+            state.layerGroups[region] = L.layerGroup();
+            L.tileLayer(tilemaps[region], {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 19
+            }).addTo(state.layerGroups[region]);
+        });
+
+        // Add the world layer group to the map initially
+        state.layerGroups.world.addTo(map);
+
+        // Function to add markers
+        function addMarkers(region, markersData) {
+            state.markers[region] = [];
+            markersData.forEach(markerData => {
+                const marker = L.circleMarker([markerData.lat, markerData.lon], {
+                    radius: 8,
+                    fillColor: getLayoffSeverityColor(markerData.layoffSeverity),
+                    color: '#000',
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                }).bindPopup(`<b>${markerData.name}</b><br>Industry: ${markerData.industry}<br>Layoff Severity: ${markerData.layoffSeverity}<br>Stock Impact: ${markerData.stockImpact}`);
+                state.markers[region].push(marker);
+                marker.addTo(state.layerGroups[region]);
+                
+                marker.on('click', function() {
+                    showLayoffChart(markerData);
+                });
+            });
+        }
+
+        // Function to get color based on layoff severity
+        function getLayoffSeverityColor(severity) {
+            if (severity === 'Low') return '#00e400';
+            else if (severity === 'Moderate') return '#ffff00';
+            else if (severity === 'High') return '#ff7e00';
+            else if (severity === 'Severe') return '#ff0000';
+            else return '#7e0023';
+        }
+
+        // Add sample markers (replace with real data)
+        addMarkers('world', [
+            { name: 'Global Tech Hub', lat: 37.7749, lon: -122.4194, industry: 'Tech', layoffSeverity: 'High', stockImpact: '-5.2%' },
+            { name: 'European Finance Center', lat: 51.5074, lon: -0.1278, industry: 'Finance', layoffSeverity: 'Moderate', stockImpact: '-2.1%' },
+            { name: 'Asian Manufacturing Hub', lat: 31.2304, lon: 121.4737, industry: 'Manufacturing', layoffSeverity: 'Severe', stockImpact: '-7.8%' },
+        ]);
+        addMarkers('north-america', [
+            { name: 'Silicon Valley', lat: 37.3875, lon: -122.0575, industry: 'Tech', layoffSeverity: 'High', stockImpact: '-6.3%' },
+            { name: 'Detroit', lat: 42.3314, lon: -83.0458, industry: 'Automotive', layoffSeverity: 'Moderate', stockImpact: '-3.5%' },
+        ]);
+        // Add markers for other regions...
+
+        // Handle region selection
+        $('#region-select').on('change', function() {
+            const newRegion = $(this).val();
+            changeRegion(newRegion);
+        });
+
+        function changeRegion(newRegion) {
+            map.removeLayer(state.layerGroups[state.currentRegion]);
+            map.addLayer(state.layerGroups[newRegion]);
+
+            const { center, zoom } = regions[newRegion];
+            map.setView(center, zoom);
+            
+            state.currentRegion = newRegion;
+            updateData(newRegion);
+        }
+
+        // Function to update the bottom bar data
+        function updateData(region) {
+            // Placeholder data - replace with real data in a production environment
+            const data = {
+                'world': { severity: 'High', industry: 'Tech', unemploymentChange: '+0.7%', stockImpact: '-3.5%' },
+                'north-america': { severity: 'Moderate', industry: 'Tech', unemploymentChange: '+0.5%', stockImpact: '-2.8%' },
+                'europe': { severity: 'Low', industry: 'Finance', unemploymentChange: '+0.2%', stockImpact: '-1.2%' },
+                'asia': { severity: 'Severe', industry: 'Manufacturing', unemploymentChange: '+1.2%', stockImpact: '-5.7%' },
+                'south-america': { severity: 'Moderate', industry: 'Mining', unemploymentChange: '+0.6%', stockImpact: '-2.3%' },
+                'africa': { severity: 'Low', industry: 'Agriculture', unemploymentChange: '+0.3%', stockImpact: '-0.9%' },
+                'oceania': { severity: 'Low', industry: 'Tourism', unemploymentChange: '+0.1%', stockImpact: '-0.5%' }
+            };
+
+            $('#layoff-severity').text(data[region].severity);
+            $('#layoff-indicator').css('background-color', getLayoffSeverityColor(data[region].severity));
+            $('#affected-industry').text(data[region].industry);
+            $('#unemployment-change').text(data[region].unemploymentChange);
+            $('#stock-impact').text(data[region].stockImpact);
+        }
+
+        // Function to show layoff chart
+        function showLayoffChart(data) {
+            $('#chart-container').removeClass('hidden');
+            
+            const ctx = document.getElementById('layoffChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Layoffs', 'Stock Impact'],
+                    datasets: [{
+                        label: data.name,
+                        data: [
+                            data.layoffSeverity === 'Low' ? 10 : data.layoffSeverity === 'Moderate' ? 30 : data.layoffSeverity === 'High' ? 60 : 90,
+                            parseFloat(data.stockImpact)
+                        ],
+                        backgroundColor: [
+                            getLayoffSeverityColor(data.layoffSeverity),
+                            'rgba(75, 192, 192, 0.6)'
+                        ]
+                    }]
+                },
+                options: {
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // Close chart button
+        $('#close-chart').on('click', function() {
+            $('#chart-container').addClass('hidden');
+        });
+
+        // Initial data update
+        updateData('world');
+    </script>
+</body>
+</html>
